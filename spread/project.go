@@ -484,9 +484,27 @@ var (
 )
 
 func Load(path string) (*Project, error) {
-	filename, data, err := readProject(path)
-	if err != nil {
-		return nil, fmt.Errorf("cannot load project file from %s: %v", path, err)
+	var data []byte
+	var err error
+
+	filename := os.Getenv("SPREAD_PROJECT_FILE")
+	if filename == "" { // load from spread.yaml or .spread.yaml
+		filename, data, err = readSpreadYaml(path)
+		if err != nil {
+			return nil, fmt.Errorf("cannot load project from %s: %v", path, err)
+		}
+	} else { // load from path/filename (or just filename if absolute)
+		if !filepath.IsAbs(filename) {
+			path, err = filepath.Abs(path)
+			if err != nil {
+				return nil, fmt.Errorf("cannot get absolute path for %s: %v", path, err)
+			}
+			filename = filepath.Join(path, filename)
+		}
+		data, err = readProject(filename)
+		if err != nil {
+			return nil, fmt.Errorf("cannot load project: %v", err)
+		}
 	}
 
 	project := &Project{}
@@ -691,7 +709,17 @@ func Load(path string) (*Project, error) {
 	return project, nil
 }
 
-func readProject(path string) (filename string, data []byte, err error) {
+func readProject(filename string) (data []byte, err error) {
+	debugf("Trying to read %s...", filename)
+	data, err = os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+func readSpreadYaml(path string) (filename string, data []byte, err error) {
 	path, err = filepath.Abs(path)
 	if err != nil {
 		return "", nil, fmt.Errorf("cannot get absolute path for %s: %v", path, err)
@@ -699,17 +727,18 @@ func readProject(path string) (filename string, data []byte, err error) {
 
 	for {
 		filename = filepath.Join(path, "spread.yaml")
-		debugf("Trying to read %s...", filename)
-		data, err = ioutil.ReadFile(filename)
+
+		data, err := readProject(filename)
 		if os.IsNotExist(err) {
 			filename = filepath.Join(path, ".spread.yaml")
-			debugf("Trying to read %s...", filename)
-			data, err = ioutil.ReadFile(filename)
+			data, err = readProject(filename)
 		}
 		if err == nil {
 			logf("Found %s.", filename)
 			return filename, data, nil
 		}
+
+		// Retry in the parent directory
 		newpath := filepath.Dir(path)
 		if newpath == path {
 			break

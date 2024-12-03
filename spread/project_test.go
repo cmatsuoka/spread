@@ -1,7 +1,6 @@
 package spread_test
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -78,19 +77,42 @@ suites:
  tests/:
   summary: mock tests
 `)
-	tmpdir := c.MkDir()
-	err := ioutil.WriteFile(filepath.Join(tmpdir, "spread.yaml"), spreadYaml, 0644)
-	c.Assert(err, IsNil)
-	err = os.MkdirAll(filepath.Join(tmpdir, "tests"), 0755)
-	c.Assert(err, IsNil)
 
-	prj, err := spread.Load(tmpdir)
-	c.Assert(err, IsNil)
-	backend := prj.Backends["google"]
-	c.Check(backend.Name, Equals, "google")
-	c.Check(backend.Systems["system-1"].Plan, Equals, "global-plan")
-	c.Check(backend.Systems["system-2"].Plan, Equals, "plan-for-2")
-	c.Check(backend.Systems["system-3"].Plan, Equals, "global-plan")
+	for _, tc := range []struct {
+		name        string // the file name to write the project to
+		prjFilename string // the file name specified by the user
+		errMsg      string // the expected error message
+	}{
+		{"spread.yaml", "", ""},
+		{".spread.yaml", "", ""},
+		{"other.yaml", "", "cannot load project from .*: cannot find spread.yaml or .spread.yaml"},
+		{"custom.yaml", "custom.yaml", ""},
+		{"spread.yaml", "/custom.yaml", "cannot load project: open /custom.yaml: no such file or directory"},
+		{"spread.yaml", "custom.yaml", "cannot load project: open /.*/custom.yaml: no such file or directory"},
+	} {
+		tmpdir := c.MkDir()
+		err := os.WriteFile(filepath.Join(tmpdir, tc.name), spreadYaml, 0644)
+		c.Assert(err, IsNil)
+		err = os.MkdirAll(filepath.Join(tmpdir, "tests"), 0755)
+		c.Assert(err, IsNil)
+
+		if tc.prjFilename != "" {
+			os.Setenv("SPREAD_PROJECT_FILE", tc.prjFilename)
+		}
+		defer os.Unsetenv("SPREAD_PROJECT_FILE")
+
+		prj, err := spread.Load(tmpdir)
+		if tc.errMsg == "" {
+			c.Assert(err, IsNil, Commentf("test case: %+v", tc))
+			backend := prj.Backends["google"]
+			c.Check(backend.Name, Equals, "google")
+			c.Check(backend.Systems["system-1"].Plan, Equals, "global-plan")
+			c.Check(backend.Systems["system-2"].Plan, Equals, "plan-for-2")
+			c.Check(backend.Systems["system-3"].Plan, Equals, "global-plan")
+		} else {
+			c.Assert(err, ErrorMatches, tc.errMsg, Commentf("test case: %+v", tc))
+		}
+	}
 }
 
 func (s *projectSuite) TestOptionalInt(c *C) {
