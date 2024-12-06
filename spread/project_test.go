@@ -87,10 +87,14 @@ suites:
 		{".spread.yaml", "", ""},
 		{"other.yaml", "", "cannot load project from .*: cannot find spread.yaml or .spread.yaml"},
 		{"custom.yaml", "custom.yaml", ""},
+		{"subdir/custom.yaml", "subdir/custom.yaml", ""},
+		{"subdir/custom.yaml", "subdir/.././subdir/custom.yaml", ""},
 		{"spread.yaml", "/custom.yaml", "cannot load project: open /custom.yaml: no such file or directory"},
 		{"spread.yaml", "custom.yaml", "cannot load project: open /.*/custom.yaml: no such file or directory"},
 	} {
 		tmpdir := c.MkDir()
+		os.MkdirAll(filepath.Join(tmpdir, "subdir"), 0755)
+
 		err := os.WriteFile(filepath.Join(tmpdir, tc.name), spreadYaml, 0644)
 		c.Assert(err, IsNil)
 		err = os.MkdirAll(filepath.Join(tmpdir, "tests"), 0755)
