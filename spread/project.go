@@ -488,22 +488,28 @@ func Load(path string) (*Project, error) {
 	var err error
 
 	altFilename := os.Getenv("SPREAD_PROJECT_FILE")
-	var filename string
+	var filename, projectPath string
 	if altFilename == "" { // load from spread.yaml or .spread.yaml
 		filename, data, err = readSpreadYaml(path)
 		if err != nil {
 			return nil, fmt.Errorf("cannot load project from %s: %v", path, err)
 		}
+
+		// The project path is where spread.yaml is located (may be a parent dir).
+		projectPath = filepath.Dir(filename)
 	} else { // load from path/filename (or just filename if absolute)
+		// Don't set the project path based on the project file location.
+		projectPath, err = filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("cannot get absolute path for %s: %v", path, err)
+		}
+
 		if filepath.IsAbs(altFilename) {
 			filename = altFilename
 		} else {
-			path, err = filepath.Abs(path)
-			if err != nil {
-				return nil, fmt.Errorf("cannot get absolute path for %s: %v", path, err)
-			}
-			filename = filepath.Join(path, altFilename)
+			filename = filepath.Join(projectPath, altFilename)
 		}
+
 		data, err = readProject(filename)
 		if err != nil {
 			return nil, fmt.Errorf("cannot load project: %v", err)
@@ -523,15 +529,7 @@ func Load(path string) (*Project, error) {
 		return nil, fmt.Errorf("missing project path field with remote project location")
 	}
 
-	if altFilename == "" {
-		// The project path is where spread.yaml is located (may be a parent dir).
-		project.Path = filepath.Dir(filename)
-	} else {
-		// If a different project file name is used, don't change the project path
-		// based on the project file location.
-		project.Path = path
-	}
-
+	project.Path = projectPath
 	project.Repack = strings.TrimSpace(project.Repack)
 	project.Prepare = strings.TrimSpace(project.Prepare)
 	project.Restore = strings.TrimSpace(project.Restore)
