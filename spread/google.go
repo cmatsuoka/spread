@@ -180,10 +180,22 @@ func googleParseName(name string) (time.Time, error) {
 	return t, nil
 }
 
+const googleLabelMaxLen = 63
+
 var googleLabelExp = regexp.MustCompile("^[a-z0-9_-]+$")
 
 func (p *googleProvider) validLabel(label string) bool {
-	return len(label) < 64 && googleLabelExp.MatchString(label)
+	return len(label) <= googleLabelMaxLen && googleLabelExp.MatchString(label)
+}
+
+var googleLabelInvalidChars = regexp.MustCompile("[^a-z0-9_-]")
+
+func ensureGoogleLabelFormat(label string) string {
+	repl := googleLabelInvalidChars.ReplaceAllLiteralString(strings.ToLower(label), "_")
+	if len(repl) > googleLabelMaxLen {
+		repl = repl[:googleLabelMaxLen]
+	}
+	return repl
 }
 
 type googleInstanceInterfaces struct {
@@ -404,7 +416,7 @@ func (p *googleProvider) createMachine(ctx context.Context, system *System) (*go
 
 	labels := googleParams{
 		"spread": "true",
-		"owner":  strings.ToLower(username()),
+		"owner":  ensureGoogleLabelFormat(username()),
 		"reuse":  strconv.FormatBool(p.options.Reuse),
 	}
 	if p.validLabel(p.options.Password) {

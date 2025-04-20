@@ -77,3 +77,5 @@ func ProjectImages(provider Provider, project string) ([]googleImage, error) {
 }
 
 type GoogleImage = googleImage
+
+var EnsureGoogleLabelFormat = ensureGoogleLabelFormat

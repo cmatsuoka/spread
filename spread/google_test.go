@@ -67,3 +67,32 @@ func (s *googleSuite) TestImagesCache(c *C) {
 	c.Assert(images, HasLen, 1)
 	c.Check(n, Equals, 2)
 }
+
+type ensureLabelFormatTest struct {
+	label          string
+	formattedLabel string
+}
+
+var ensureLabelFormatTests = []ensureLabelFormatTest{{
+	label:          "",
+	formattedLabel: "",
+}, {
+	label:          "user123",
+	formattedLabel: "user123",
+}, {
+	label:          "User.Name",
+	formattedLabel: "user_name",
+}, {
+	label:          "user.name@my-domain.com",
+	formattedLabel: "user_name_my-domain_com",
+}, {
+	label:          "123456789.123456789@123456789.123456789.123456789.123456789.1234567890",
+	formattedLabel: "123456789_123456789_123456789_123456789_123456789_123456789_123",
+}}
+
+func (s *googleSuite) TestEnsureLabelFormat(c *C) {
+	for _, tc := range ensureLabelFormatTests {
+		repl := spread.EnsureGoogleLabelFormat(tc.label)
+		c.Check(repl, Equals, tc.formattedLabel)
+	}
+}
