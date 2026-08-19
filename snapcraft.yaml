@@ -22,6 +22,7 @@ apps:
           - home
           - network
           - network-bind
+          - lxd
 
 parts:
     spread:
@@ -34,3 +35,13 @@ parts:
         override-pull: |
           craftctl default
           craftctl set version="$(date +"%Y.%m.%d")-g$(git rev-parse --short HEAD)"
+
+    lxd:
+        source: https://github.com/canonical/lxd
+        source-type: git
+        source-depth: 1
+        source-branch: stable-5.21
+        plugin: nil
+        override-build: |
+          mkdir "${CRAFT_PART_INSTALL}/bin"
+          go build -o "${CRAFT_PART_INSTALL}/bin/lxc" ./lxc
