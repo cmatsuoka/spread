@@ -327,7 +327,7 @@ func (p *openstackProvider) findAvailabilityZone() (*nova.AvailabilityZone, erro
 func (p *openstackProvider) findSecurityGroupNames(names []string) ([]nova.SecurityGroupName, error) {
 	var secGroupNames []nova.SecurityGroupName
 
-	secGroups, err := p.networkClient.ListSecurityGroupsV2()
+	secGroups, err := p.networkClient.ListSecurityGroupsV2(neutron.ListSecurityGroupsV2Query{})
 	if err != nil {
 		return nil, fmt.Errorf("cannot retrieve security groups: %v", &openstackError{err})
 	}
@@ -751,8 +751,17 @@ func (p *openstackProvider) checkCredentials() error {
 }
 
 func (p *openstackProvider) authenticate() error {
+	// Validate the configured authentication mode before contacting the
+	// identity service, so that configuration errors are reported as
+	// configuration errors rather than as connection failures.
+	authMode, err := p.authMode()
+	if err != nil {
+		return err
+	}
+
 	// Only identity API v3 is currently supported
-	identityAPIVersion, err := getIdentityAPIVersion(p.backend.Endpoint)
+	var identityAPIVersion int
+	identityAPIVersion, err = getIdentityAPIVersion(p.backend.Endpoint)
 	if err != nil {
 		return fmt.Errorf("cannot obtain the identity API version: %w", err)
 	}
@@ -770,16 +779,22 @@ func (p *openstackProvider) authenticate() error {
 
 	// Authenticate using the project credentials.
 	creds := &identity.Credentials{
-		URL:        p.backend.Endpoint, // The authentication URL
-		User:       p.backend.Account,  // The username to authenticate as
-		Secrets:    p.backend.Key,      // The authentication secret
-		Region:     region,             // The OS region
-		TenantName: osproj,             // The OS project name
-		Version:    identityAPIVersion, // The identity API version
+		URL:     p.backend.Endpoint, // The authentication URL
+		Region:  region,             // The OS region
+		Version: identityAPIVersion, // The identity API version
 	}
-	authClient := gooseclient.NewClient(creds, identity.AuthUserPassV3, nil)
+	switch authMode {
+	case identity.AuthApplicationCredentialV3:
+		creds.ApplicationCredentialID = p.backend.Account
+		creds.ApplicationCredentialSecret = p.backend.Key
+	case identity.AuthUserPassV3:
+		creds.User = p.backend.Account
+		creds.Secrets = p.backend.Key
+		creds.TenantName = osproj
+	}
+	authClient := gooseclient.NewClient(creds, authMode, nil)
 	if err := authClient.Authenticate(); err != nil {
-		err = fmt.Errorf("cannot authenticate: %v", &openstackError{err})
+		return fmt.Errorf("cannot authenticate: %v", &openstackError{err})
 	}
 
 	p.region = creds.Region
@@ -789,6 +804,23 @@ func (p *openstackProvider) authenticate() error {
 	p.imageClient = glance.New(authClient)
 
 	return nil
+}
+
+// invalidAuthMode is returned by authMode alongside an error to mark the
+// result as unusable. It is deliberately not a valid identity.AuthMode: the
+// zero value of that type is identity.AuthLegacy, which would silently select
+// Keystone v2 token authentication, a protocol spread does not support.
+const invalidAuthMode identity.AuthMode = -1
+
+func (p *openstackProvider) authMode() (identity.AuthMode, error) {
+	switch strings.ToLower(strings.TrimSpace(p.backend.Mode)) {
+	case "userpass", "userpassv3", "userpass-v3", "":
+		return identity.AuthUserPassV3, nil
+	case "application-credential", "application-credential-v3", "appcred", "appcreds":
+		return identity.AuthApplicationCredentialV3, nil
+	default:
+		return invalidAuthMode, fmt.Errorf("unsupported OpenStack mode %q", p.backend.Mode)
+	}
 }
 
 type openstackIdentityEndpointMediaTypes struct {

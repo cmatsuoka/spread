@@ -6,11 +6,16 @@ import (
 
 	gooseclient "github.com/go-goose/goose/v5/client"
 	"github.com/go-goose/goose/v5/glance"
+	"github.com/go-goose/goose/v5/identity"
 )
 
 var (
 	OpenStackName = openstackName
 )
+
+func OpenStackAuthMode(p Provider) (identity.AuthMode, error) {
+	return p.(*openstackProvider).authMode()
+}
 
 func FakeOpenStackImageClient(p Provider, imageClient glanceImageClient) (restore func()) {
 	opst := p.(*openstackProvider)

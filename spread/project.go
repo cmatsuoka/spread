@@ -66,6 +66,7 @@ type Backend struct {
 
 	// Only for OpenStack so far
 	Account  string
+	Mode     string
 	Endpoint string
 	Networks []string
 	Groups   []string

@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-goose/goose/v5/glance"
 	goosehttp "github.com/go-goose/goose/v5/http"
+	"github.com/go-goose/goose/v5/identity"
 	"github.com/go-goose/goose/v5/nova"
 	"golang.org/x/crypto/ssh"
 
@@ -75,6 +76,32 @@ func (s *openstackSuite) TestOpenStackError(c *C) {
 
 	err3 := spread.NewOpenStackError(errors.New("other error"))
 	c.Check(err3.Error(), Equals, `other error`)
+}
+
+func (s *openstackSuite) TestOpenStackAuthModeDefaultsToUserPassV3(c *C) {
+	opst := newOpenStack()
+	mode, err := spread.OpenStackAuthMode(opst)
+	c.Assert(err, IsNil)
+	c.Check(mode, Equals, identity.AuthUserPassV3)
+}
+
+func (s *openstackSuite) TestOpenStackAuthModeApplicationCredential(c *C) {
+	opst := newOpenStack()
+	opst.Backend().Mode = "application-credential"
+	mode, err := spread.OpenStackAuthMode(opst)
+	c.Assert(err, IsNil)
+	c.Check(mode, Equals, identity.AuthApplicationCredentialV3)
+}
+
+func (s *openstackSuite) TestOpenStackAuthModeInvalid(c *C) {
+	opst := newOpenStack()
+	opst.Backend().Mode = "nope"
+	mode, err := spread.OpenStackAuthMode(opst)
+	c.Assert(err, ErrorMatches, `unsupported OpenStack mode "nope"`)
+	// The mode accompanying the error must not be usable, and in
+	// particular must not be identity.AuthLegacy (the zero value), which
+	// would authenticate against the unsupported Keystone v2 API.
+	c.Check(mode, Not(Equals), identity.AuthLegacy)
 }
 
 type fakeGlanceImageClient struct {
