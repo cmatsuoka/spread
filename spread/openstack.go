@@ -814,9 +814,9 @@ const invalidAuthMode identity.AuthMode = -1
 
 func (p *openstackProvider) authMode() (identity.AuthMode, error) {
 	switch strings.ToLower(strings.TrimSpace(p.backend.Mode)) {
-	case "userpass", "userpassv3", "userpass-v3", "":
+	case "userpass", "userpassv3", "userpass-v3":
 		return identity.AuthUserPassV3, nil
-	case "application-credential", "application-credential-v3", "appcred", "appcreds":
+	case "", "application-credential", "application-credential-v3", "appcred", "appcreds":
 		return identity.AuthApplicationCredentialV3, nil
 	default:
 		return invalidAuthMode, fmt.Errorf("unsupported OpenStack mode %q", p.backend.Mode)

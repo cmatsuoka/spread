@@ -78,11 +78,11 @@ func (s *openstackSuite) TestOpenStackError(c *C) {
 	c.Check(err3.Error(), Equals, `other error`)
 }
 
-func (s *openstackSuite) TestOpenStackAuthModeDefaultsToUserPassV3(c *C) {
+func (s *openstackSuite) TestOpenStackAuthModeDefaultsToApplicationCredentialV3(c *C) {
 	opst := newOpenStack()
 	mode, err := spread.OpenStackAuthMode(opst)
 	c.Assert(err, IsNil)
-	c.Check(mode, Equals, identity.AuthUserPassV3)
+	c.Check(mode, Equals, identity.AuthApplicationCredentialV3)
 }
 
 func (s *openstackSuite) TestOpenStackAuthModeApplicationCredential(c *C) {
