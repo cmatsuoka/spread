@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -149,13 +150,54 @@ type v3TokenWrapper struct {
 // v3Token represents the response token as described in:
 // http://developer.openstack.org/api-ref-identity-v3.html#authenticatePasswordScoped
 type v3Token struct {
-	Expires time.Time        `json:"expires_at"`
-	Issued  time.Time        `json:"issued_at"`
+	Expires flexibleTime     `json:"expires_at"`
+	Issued  flexibleTime     `json:"issued_at"`
 	Methods []string         `json:"methods"`
 	Catalog []v3TokenCatalog `json:"catalog"`
 	Project v3TokenProject   `json:"project"`
 	Domain  v3TokenDomain    `json:"domain"`
 	User    v3TokenUser      `json:"user"`
+}
+
+// flexibleTime parses Keystone token timestamps leniently. Keystone is
+// expected to render RFC3339 timestamps (with a trailing "Z" or numeric
+// offset), which is what time.Time's own UnmarshalJSON requires. Some
+// deployments, however, have been observed to omit the offset for
+// application-credential-scoped tokens specifically (e.g.
+// "2026-10-08T19:27:05.092894", no "Z"), which time.Time rejects outright.
+// Fall back to parsing without a timezone, assuming UTC, rather than
+// failing authentication over an unused, informational field.
+type flexibleTime time.Time
+
+func parseV3TokenTime(raw string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+	} {
+		parsed, err := time.Parse(layout, raw)
+		if err == nil {
+			return parsed.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid v3 token time %q", raw)
+}
+
+func (t *flexibleTime) UnmarshalJSON(data []byte) error {
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	parsed, err := parseV3TokenTime(raw)
+	if err != nil {
+		return err
+	}
+	*t = flexibleTime(parsed)
+	return nil
 }
 
 type v3TokenCatalog struct {
