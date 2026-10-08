@@ -920,12 +920,18 @@ This backend allows distributing your tasks to an OpenStack environment. It
 currently only supports version 3 of the OpenStack identity API and the
 default domain.
 
+The backend supports two authentication modes via the optional `mode` field:
+
+- `userpass` (default): `account` is the Keystone username and `key` is the password.
+- `application-credential`: `account` is the application credential ID and `key` is the application credential secret.
+
 _$PROJECT/spread.yaml_
 ```
 (...)
 
 backends:
     openstack:
+        mode: userpass
         endpoint: https://my-keystone-server:5000/v3
         account: my-account
         key: '$(HOST: echo "$OS_PASSWORD")'
@@ -945,6 +951,14 @@ backends:
                     - network_pvn
                 groups:
                     - group_external
+
+    openstack-appcred:
+        type: openstack
+        mode: application-credential
+        endpoint: https://my-keystone-server:5000/v3
+        account: '$(HOST: echo "$OS_APPLICATION_CREDENTIAL_ID")'
+        key: '$(HOST: echo "$OS_APPLICATION_CREDENTIAL_SECRET")'
+        location: my-project/my-region
 ```
 
 Images are located by first attempting to match the provided value exactly

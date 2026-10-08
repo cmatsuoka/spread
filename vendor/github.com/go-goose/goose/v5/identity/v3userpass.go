@@ -1,0 +1,273 @@
+package identity
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	gooseerrors "github.com/go-goose/goose/v5/errors"
+	goosehttp "github.com/go-goose/goose/v5/http"
+)
+
+// v3AuthWrapper wraps the v3AuthRequest to perform v3 authentication.
+type v3AuthWrapper struct {
+	Auth v3AuthRequest `json:"auth"`
+}
+
+// v3AuthRequest contains the authentication request.
+type v3AuthRequest struct {
+	Identity v3AuthIdentity `json:"identity"`
+	Scope    *v3AuthScope   `json:"scope,omitempty"`
+}
+
+// v3AuthIdentity contains the identity portion of an authentication
+// request.
+type v3AuthIdentity struct {
+	Methods               []string                     `json:"methods"`
+	Password              *v3AuthPassword              `json:"password,omitempty"`
+	Token                 *v3AuthToken                 `json:"token,omitempty"`
+	ApplicationCredential *v3AuthApplicationCredential `json:"application_credential,omitempty"`
+}
+
+// v3AuthPassword contains a password authentication request.
+type v3AuthPassword struct {
+	User v3AuthUser `json:"user"`
+}
+
+// v3AuthUser contains the user part of a password authentication
+// request..
+type v3AuthUser struct {
+	Domain   *v3AuthDomain `json:"domain,omitempty"`
+	ID       string        `json:"id,omitempty"`
+	Name     string        `json:"name,omitempty"`
+	Password string        `json:"password"`
+}
+
+// v3AuthDomain contains a domain definition of an authentication
+// request.
+type v3AuthDomain struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+// v3AuthToken contains the token to use for token authentication.
+type v3AuthToken struct {
+	ID string `json:"id"`
+}
+
+// v3AuthScope contains the scope of the authentication request.
+type v3AuthScope struct {
+	Domain  *v3AuthDomain  `json:"domain,omitempty"`
+	Project *v3AuthProject `json:"project,omitempty"`
+	Trust   *v3AuthTrust   `json:"OS-TRUST:trust,omitempty"`
+}
+
+// v3AuthProject contains the project scope for the authentication
+// request.
+type v3AuthProject struct {
+	Domain *v3AuthDomain `json:"domain,omitempty"`
+	ID     string        `json:"id,omitempty"`
+	Name   string        `json:"name,omitempty"`
+}
+
+type v3AuthTrust struct {
+	ID string `json:"id"`
+}
+
+// V3UserPass is an Authenticator that will perform username + password
+// authentication using the v3 protocol.
+type V3UserPass struct {
+	client goosehttp.HttpClient
+}
+
+// Auth performs a v3 username + password authentication request using
+// the values supplied in creds.
+func (u *V3UserPass) Auth(creds *Credentials) (*AuthDetails, error) {
+	if u.client == nil {
+		u.client = goosehttp.New()
+	}
+	userDomain := creds.UserDomain
+	if userDomain == "" {
+		userDomain = "default"
+	}
+	projectDomain := creds.ProjectDomain
+	if projectDomain == "" {
+		projectDomain = "default"
+	}
+	auth := v3AuthWrapper{
+		Auth: v3AuthRequest{
+			Identity: v3AuthIdentity{
+				Methods: []string{"password"},
+				Password: &v3AuthPassword{
+					User: v3AuthUser{
+						Domain: &v3AuthDomain{
+							Name: userDomain,
+						},
+						Name:     creds.User,
+						Password: creds.Secrets,
+					},
+				},
+			},
+		},
+	}
+	if creds.TrustID != "" {
+		if creds.TenantName != "" || creds.TenantID != "" || creds.Domain != "" {
+			return nil, fmt.Errorf("trust authentication cannot be scoped to a project or domain")
+		}
+		auth.Auth.Scope = &v3AuthScope{
+			Trust: &v3AuthTrust{
+				ID: creds.TrustID,
+			},
+		}
+	} else if creds.TenantName != "" || creds.TenantID != "" {
+		auth.Auth.Scope = &v3AuthScope{
+			Project: &v3AuthProject{
+				Domain: &v3AuthDomain{
+					Name: projectDomain,
+				},
+				Name: creds.TenantName,
+				ID:   creds.TenantID,
+			},
+		}
+	}
+
+	if creds.Domain != "" {
+		auth.Auth.Scope = &v3AuthScope{
+			Domain: &v3AuthDomain{
+				Name: creds.Domain,
+			},
+		}
+	}
+
+	return v3KeystoneAuth(u.client, &auth, creds.URL)
+}
+
+type v3TokenWrapper struct {
+	Token v3Token `json:"token"`
+}
+
+// v3Token represents the response token as described in:
+// http://developer.openstack.org/api-ref-identity-v3.html#authenticatePasswordScoped
+type v3Token struct {
+	Expires flexibleTime     `json:"expires_at"`
+	Issued  flexibleTime     `json:"issued_at"`
+	Methods []string         `json:"methods"`
+	Catalog []v3TokenCatalog `json:"catalog"`
+	Project v3TokenProject   `json:"project"`
+	Domain  v3TokenDomain    `json:"domain"`
+	User    v3TokenUser      `json:"user"`
+}
+
+// flexibleTime parses Keystone token timestamps leniently. Keystone is
+// expected to render RFC3339 timestamps (with a trailing "Z" or numeric
+// offset), which is what time.Time's own UnmarshalJSON requires. Some
+// deployments, however, have been observed to omit the offset for
+// application-credential-scoped tokens specifically (e.g.
+// "2026-10-08T19:27:05.092894", no "Z"), which time.Time rejects outright.
+// Fall back to parsing without a timezone, assuming UTC, rather than
+// failing authentication over an unused, informational field.
+type flexibleTime time.Time
+
+func parseV3TokenTime(raw string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+	} {
+		parsed, err := time.Parse(layout, raw)
+		if err == nil {
+			return parsed.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid v3 token time %q", raw)
+}
+
+func (t *flexibleTime) UnmarshalJSON(data []byte) error {
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	parsed, err := parseV3TokenTime(raw)
+	if err != nil {
+		return err
+	}
+	*t = flexibleTime(parsed)
+	return nil
+}
+
+type v3TokenCatalog struct {
+	ID        string            `json:"id"`
+	Type      string            `json:"type"`
+	Name      string            `json:"name"`
+	Endpoints []v3TokenEndpoint `json:"endpoints"`
+}
+
+type v3TokenEndpoint struct {
+	ID        string `json:"id"`
+	RegionID  string `json:"region_id"`
+	URL       string `json:"url"`
+	Interface string `json:"interface"`
+}
+
+type v3TokenProject struct {
+	ID     string        `json:"id"`
+	Name   string        `json:"name"`
+	Domain v3TokenDomain `json:"domain"`
+}
+
+type v3TokenUser struct {
+	ID     string        `json:"id"`
+	Name   string        `json:"name"`
+	Domain v3TokenDomain `json:"domain"`
+}
+
+type v3TokenDomain struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// v3KeystoneAuth performs a v3 authentication request.
+func v3KeystoneAuth(c goosehttp.HttpClient, v interface{}, url string) (*AuthDetails, error) {
+	var resp v3TokenWrapper
+	req := goosehttp.RequestData{
+		ReqValue:  v,
+		RespValue: &resp,
+		ExpectedStatus: []int{
+			http.StatusCreated,
+		},
+	}
+	if err := c.JsonRequest("POST", url, "", &req, nil); err != nil {
+		return nil, fmt.Errorf("requesting token: %v", err)
+	}
+	tok := req.RespHeaders.Get("X-Subject-Token")
+	if tok == "" {
+		return nil, gooseerrors.NewUnauthorisedf(nil, "", "empty auth token received.")
+	}
+	rsu := make(map[string]ServiceURLs, len(resp.Token.Catalog))
+	for _, s := range resp.Token.Catalog {
+		for _, ep := range s.Endpoints {
+			if ep.Interface != "public" {
+				continue
+			}
+			su, ok := rsu[ep.RegionID]
+			if !ok {
+				su = make(ServiceURLs)
+				rsu[ep.RegionID] = su
+			}
+			su[s.Type] = ep.URL
+		}
+	}
+	return &AuthDetails{
+		Token:             tok,
+		TenantId:          resp.Token.Project.ID,
+		TenantName:        resp.Token.Project.Name,
+		UserId:            resp.Token.User.ID,
+		Domain:            resp.Token.Domain.Name,
+		RegionServiceURLs: rsu,
+	}, nil
+}
